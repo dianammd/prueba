@@ -1,0 +1,152 @@
+---
+title: "Proyecto 1"
+author: "Diana Mariño y José Ignacio Miquel"
+date: '2022-04-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Análisis de relación entre el *Gross Domestic Product* (GDP) y el *Happy Planet Index* (HPI)
+
+## Planteamiento de hipótesis y definición de área de estudio
+
+El *Happy Planet Index* (HPI) es una métrica que toma en cuenta la expectativa de vida, la percepción subjetiva de la felicidad de los habitantes y la huella ecológica del país. Este índice está diseñado para mostrar el estado de bienestar, felicidad y salud de las personas, además de considerar los aspectos medioambientales (*Happy Planet Index -- How Happy Is the Planet*, 2019).
+
+El *Gross Domestic Product* (GDP), por otro lado, se construye a partir del crecimiento económico y la riqueza de un país. En particular, el GDP per cápita, que es el GDP dividido en la cantidad de habitantes, es más utilizado en análisis estadísticos debido a que el GDP suele estar sesgado por la cantidad de habitantes que tiene el país, y por ello se decide trabajar con este indicador (*GDP and Spending - Gross Domestic Product (GDP) - OECD Data*, 2022).
+
+Tomando en cuenta las variables anteriormente mencionadas se cree que puede existir una correlación entre la componente económica de un país y la componente de felicidad y bienestar. Por esta razón se plantea la siguiente hipótesis "Existe una correlación positiva entre el *GDP per capita* y el *Happy Planet Index*, es decir, a mayor *GDP per capita* se espera un mayor HPI."
+
+Para comprobar la hipótesis planteada se procederá a realizar un análisis estadístico y cartográfico de dichas variables, tomando en cuenta solo los paises de Norteamérica y Sudamérica.
+
+## Obtención y limpieza de datos
+
+La data del *Happy Planet Index* (HPI) se obtiene de un archivo CSV descargado de la página oficial (<https://happyplanetindex.org/>). Los polígonos de los países, el *Gross Domestic Product* y la población se obtienen de la librería rnaturalearth, y a partir de estos últimos dos se calcula el *GDP per capita.*
+
+Una vez obtenida la data se procede a filtrarla, seleccionando solo los países que se decidió estudiar, que son aquellos ubicados en América de Norte o América del Sur.
+
+```{r message = FALSE, warning= FALSE}
+
+# Se obtienen las librerías necesarias
+library(rnaturalearth)
+library(sp)
+library(rgdal)
+library(sf)
+library(tmap)
+library(tidyverse)
+
+
+# Se obtiene el HPI del archivo
+hpi = read.csv("Data/HPI.csv") 
+
+# Se obtiene la data de los países de rnaturalearth
+countries = st_as_sf(ne_countries()) 
+
+# Se calcula el Gross Domestic Product per capita utilizando el GDP (transformado a millones) y la población
+ppc = (countries$gdp_md_est * 1000000)/ countries$pop_est
+countries$ppc = ppc 
+
+# Se seleccionan las columnas relevantes de ambos datasets
+countries = countries %>% select("iso_a3","name","ppc","continent", "geometry")
+hpi = hpi %>% select(HPI,ISO)
+
+# Se seleccionan solo los datos de los países de norteamérica y sudamérica
+countries = countries[countries$continent == 'North America'| countries$continent == 'South America',] 
+
+# Se renombran las columnas
+colnames(countries) <- c("ISO","name","GDP_per_Capita","continent","geometry")
+
+# Se combinan ambos set de datos y se transforman a spatial features
+df = merge(hpi,countries,by="ISO",all.y=TRUE)
+df_sf = st_as_sf(df)
+```
+
+Para analizar los datos obtenidos se eliminan los valores nulos y posteriormente se grafican las variables pertinentes:
+
+```{r}
+
+#Hacemos limpieza de datos para el análisis estadístic, deshaciendonos de los valores nulos 
+
+df_clean <- na.omit(df)
+
+# Graficamos la data
+
+ggplot(data = df_clean) + 
+  geom_point(mapping = aes(x = GDP_per_Capita, y = HPI))
+```
+
+Se nota que hay 2 datos que parecen ser outliers y al analizarlos se determina que estos corresponden a Estados Unidos y Canadá, que tienen un *GDP per capita* considerablemente más alto que el resto de los países; por tanto, se concluye que estos datos atípicos no provienen de un error en la data sino que son acordes a la situación real.
+
+```{r}
+# Se muestran los paises a los que corresponde el outlier
+
+(df_clean[(df_clean$GDP_per_Capita > 30000),])
+```
+
+En el gráfico generado previamente no se logra visualizar con claridad alguna relación lineal entre las variables, por lo que se decide graficar nuevamente sin Estados Unidos y Canadá, de forma que el resto de los puntos se puedan observar mejor. Cabe destacer que lo anterior es solo para fines de visualización de la data.
+
+```{r}
+# Se saca a USA
+df_clean2 <-df_clean[!(df_clean$GDP_per_Capita > 30000),]
+
+# Se grafica nuevamente
+ggplot(data = df_clean2) + 
+  geom_point(mapping = aes(x = GDP_per_Capita, y = HPI))
+```
+
+En este gráfico tampoco se detecta la existencia de alguna relación lineal, y en realidad no se hace evidente que exista ningún tipo de relación. Sin embargo, se decide aplicar el test de correlacion de Spearman para confirmar que la hipotesis planteada, que existe correlación, está errada. Se elige este test porque es poco sensible a outliers y considera relaciones monótonas (no necesariamente lineales).
+
+## Análisis de correlación espacial
+
+Según lo mencionado anteriormente, se realiza el análisis de correlación de Spearman:
+
+```{r}
+(test <- cor.test(df_clean$GDP_per_Capita,
+                  df_clean$HPI,
+                  method = "spearman",
+                  exact = FALSE,
+                  conf.level = 0.95))
+```
+
+La hipótesis nula es que el coeficiente de correlación es 0, es decir, no hay una relación monótona entre las variables. La hipótesis alternativa es que el coeficiente no es igual a 0, es decir, si hay una correlación, bien sea positiva o negativa.
+
+Como se puede visualizar, se obtuvo un coeficiente rho de -0.3, lo cual denotaría una asociación negativa; sin embargo, el p-value obtenido es de 0.1633, el cual es mayor al nivel de significancia elegido (0.05), por lo cual no se rechaza la hipótesis nula y se concluye que no hay una relación monótona entre las variables.
+
+## Análisis cartográfico
+
+Se procede a generar un mapa interactivo en el cual se visualizará el HPI de los países con colores, mostrándose en rojo aquellos con el indicador en valores más bajos y en verde los más altos. Además, se muestra el *GDP per capita* con círculos cuyo tamaño es proporcional al valor de la variable y con tonalidades entre blanco y negro que los clasifican en grupos de mayor a menor.
+
+```{r message = FALSE, warning= FALSE}
+tmap_mode("view")
+tm_shape(df_sf) +
+  tm_polygons(col ="HPI",id="name", palette="RdYlGn")+
+  tm_shape(countries) + 
+  tm_dots("GDP_per_Capita",
+             size = "GDP_per_Capita",
+             scale= 0.7,
+             col="GDP_per_Capita",
+             palette="-Greys",id="name")+
+  tm_basemap("OpenStreetMap.Mapnik") +
+  tm_layout("Happy Planet Index (HPI) and Gross Domestic Product per capita")
+```
+
+En líneas generales no se hace evidente ninguna tendencia a que los países más felices tengan un *GDP per capita* más alto ni tampoco lo contrario, aunque resalta del caso de Estados Unidos que tiene uno de los HPI más bajos de la región y el mayor *GDP per capita*. Los países más felices del área de estudio son Colombia y Costa Rica, el *GDP per capita* del primero es similar al de los países de su área (y no es de los más bajos), mientras que el del último si es bajo en su entorno. Otros ejemplos destacables son Uruguay y Paraguay, de los cuales el primero es más feliz y tiene mayor *GDP per cápita* que el segundo, lo cual contrasta con Honduras y México, de los cuales el primero es más feliz pero tiene menor *GDP per capita*.
+
+## Resultados y conclusiones
+
+Al integrar los resultados de los análisis estadístico y cartográfico se logró concluir que no existe correlación positiva entre las variables *GDP per cápita* y HPI, dado que en ámbos análisis se halló una baja correlación. Por esta razón, la hipótesis planteada es errónea para el área estudiada y, por ende, un mayor *GPD per capita* no conlleva un mayor HPI en los países de Norteamérica y Sudamérica. Se cree que esto podría ser explicado, en parte, por el hecho de que el HPI incluye la huella de carbono y porque la medida de la felicidad de los habitantes es muy subjetiva, y puede verse afectada por diversos factores, como culturales y climáticos, que no están ligados a la prosperidad económica. Además, existen numerosas críticas al GDP y *GDP per capita*, ya que mide la capacidad productiva y de crecimiento económico sin tomar en cuenta los efectos negativos que esto tiene en la sociedad, como lo son el cambio climático y la desigualdad de ingresos, y por ello se considera que no es una medida fidedigna del bienestar humano (*GDP Is Not a Measure of Human Well-Being*, 2019).
+
+## Bibliografía
+
+1.  *Happy Planet Index -- How happy Is the planet*. (2019). Happyplanetindex.org. <https://happyplanetindex.org/>
+
+2.  *GDP and spending - Gross domestic product (GDP) - OECD Data*. (2022). TheOECD. [https://data.oecd.org/gdp/gross-domestic-product-gdp.htm#:\~:text=Gross%20domestic%20product%20(GDP)%20is,and%20services%20(less%20imports).](https://data.oecd.org/gdp/gross-domestic-product-gdp.htm#:~:text=Gross%20domestic%20product%20(GDP)%20is,and%20services%20(less%20imports).)
+
+3.  *GDP Is Not a Measure of Human Well-Being*. (2019, October 4). Harvard Business Review. <https://hbr.org/2019/10/gdp-is-not-a-measure-of-human-well-being>
+
+    ‌
+
+‌
